@@ -1,0 +1,84 @@
+[manpage_begin trofs n 0.4]
+[moddesc   {Tcl Read-Only Filesystem}]
+[titledesc {Manage read-only filesystems in archive file}]
+[require Tcl 8.5]
+[require trofs [opt 0.4]]
+[description]
+[para]
+
+The [package trofs] package provides commands to create, mount, and
+unmount archive files containing read-only filesystems.  Mounted
+trofs archives contain files, directories, and symbolic links
+that can be opened and read by Tcl commands just as if they were part
+of the native filesystem.  The public commands documented here
+are all defined in and exported from the [emph ::trofs] namespace.
+
+[section COMMANDS]
+[list_begin definitions]
+
+[call [cmd archive] [arg directory] [arg archive]]
+
+The [cmd archive] command creates a trofs archive file [arg archive]
+from the contents of [arg directory].  Only the contents of
+[arg directory] that are readable will be archived.  Unreadable
+contents will be silently omitted from the archive.  If [arg directory]
+is not a readable directory at all, an empty archive will be created.
+If [arg archive] is not an existing file, it will be created (assuming
+write permission to the directory containing it).  If [arg archive]
+is an existing file, it must be writable and seekable.  The archive
+contents will be appended to
+the [arg archive] file, starting with the character [const {\u001A}],
+which is the end of file character for Tcl's [cmd source] command.
+This technique allows a trofs archive to be attached to a
+[cmd source]-able Tcl script.  The [arg archive] file created
+by [cmd archive] is suitable for use as the first argument
+to [cmd mount].  The [cmd archive] command returns an empty string.
+
+[call [cmd mount] [arg archive] [opt [arg mountpoint]]]
+
+The [cmd mount] command mounts the trofs archive stored in
+[arg archive] as a read-only filesystem.  The archive
+file [arg archive] must be a readable, seekable, trofs
+archive file created by the [cmd archive] command.  If
+the [arg mountpoint] argument is supplied, then 
+[lb][cmd "file exists"] [arg mountpoint][rb] must
+return [const 0], and [lb][cmd "file system"] [arg mountpoint][rb]
+must return either [const native] or [const trofs] before
+the [cmd mount] call.  If no [arg mountpoint] argument is
+supplied, the [cmd mount] command will generate a suitable
+mountpoint path.  After a successful [cmd mount], 
+[lb][cmd "file system"] [arg mountpoint][rb] will return [const trofs], 
+[lb][cmd "file isdirectory"] [arg mountpoint][rb] will return [const 1],
+and the contents of [arg archive] will be visible as
+contents of the directory [arg mountpoint].  The [cmd mount]
+command returns the normalized path to [arg mountpoint].
+
+[call [cmd unmount] [arg mountpoint]]
+
+The [cmd unmount] command reverses the effect of a prior [cmd mount]
+command.  The [arg mountpoint] argument must be a mountpoint created
+by a prior call to [cmd mount].  It can be in normalized form or not;
+it will be normalized by [cmd unmount] as part of the search for a
+matching existing mountpoint.  If no such mountpoint is currently
+mounted, an error is raised.  Otherwise, the mount is undone, so
+that [lb][cmd "file exists"] [arg mountpoint][rb] once again
+returns [const 0].  The [cmd unmount] command returns an empty string.
+
+[list_end]
+
+[section EXAMPLE]
+
+[para]
+[example {
+package require trofs
+namespace import trofs::*
+archive $directory $archive
+mount $archive $mountpoint
+}]
+[para]
+At this point, both [arg \$directory] and [arg \$mountpoint] are directories,
+and their readable content should be identical.
+
+[see_also source file]
+[keywords filesystem]
+[manpage_end]

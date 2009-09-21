@@ -1,0 +1,14 @@
+trofs 0.4 - Tcl Read-only Filesystem
+
+A Tcl package providing commands to create, mount, and unmount
+archives containing read-only filesystems.  Trofs archives can
+be nested arbitrarily.
+
+See INSTALL for build and install instructions.
+
+See documentation for usage instructions.
+
+See license.terms for licensing information.
+
+Bug reports, etc. to Don Porter, donald.porter@nist.gov
+

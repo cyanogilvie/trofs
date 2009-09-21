@@ -1,0 +1,42 @@
+This package conforms to the conventions of the Tcl Extension Architecture,
+version 3.6.  With suitable utilities, you can build, install, and use this
+software via this sequence of commands:
+
+    ./configure
+    make
+    make install
+
+The trofs (Tcl Read-only Filesystem) package is meant to be a
+package used with Tcl 8.5 and later releases.  It should work
+out of the box with the instructions above.  If necessary, you
+can use the --with-tcl= option to configure to point out which
+tclConfig.sh file describes your Tcl installation.
+
+The trofs package comes with a test suite.  You can test the operations
+of the package with the command:
+
+    make test
+
+This release of trofs can also work in a limited way with Tcl 8.4
+releases at patchlevel 8.4.7 or later.  To use trofs with Tcl 8.4.x,
+first you will need to install the "dict" package available at
+
+    http://pascal.scheffers.net/software/
+
+You will need release 8.5.1 (or later?) of "dict".  Build and install
+it on top of your Tcl 8.4.x installation, accepting all defaults.
+
+After the "dict" package is installed, you will be able to build and
+install this trofs release.
+
+The trofs package built and installed against Tcl 8.4 + dict 8.5.1
+will have a few limitations.  There are known bugs in the [file link]
+and [glob] commands in Tcl 8.4 (Tcl Bugs 833713 and 943995) that may
+diminish the utility of trofs somewhat.  Also, the trofs package
+built and installed against Tcl 8.4 + dict 8.5.1 will only successfully
+load into a Tcl 8.4 interpreter with the dict package available.  Even
+though "stubs" are used, the trofs package compiled against Tcl 8.4
+will not be able to successfully [load] into a Tcl 8.5 interpreter.
+When you upgrade to Tcl 8.5, you will need to recompile the trofs
+package to use it.
+

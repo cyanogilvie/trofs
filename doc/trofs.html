@@ -1,0 +1,126 @@
+<html><head>
+<title>trofs - Tcl Read-Only Filesystem </title>
+</head>
+<! -- Generated from file './doc/trofs.man' by tcllib/doctools with format 'html'
+   -->
+<! -- CVS: $Id$ trofs.n
+   -->
+
+<body>
+<h1> trofs(n) 0.4 trofs &quot;Tcl Read-Only Filesystem&quot;</h1>
+<h2><a name="name">NAME</a></h2>
+<p>
+<p> trofs - Manage read-only filesystems in archive file
+
+
+
+
+<h2><a name="table_of_contents">TABLE OF CONTENTS</a></h2>
+<p>&nbsp;&nbsp;&nbsp;&nbsp;<a href="#table_of_contents">TABLE OF CONTENTS</a><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<a href="#synopsis">SYNOPSIS</a><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<a href="#description">DESCRIPTION</a><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<a href="#commands">COMMANDS</a><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<a href="#example">EXAMPLE</a><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<a href="#see_also">SEE ALSO</a><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<a href="#keywords">KEYWORDS</a><br>
+<h2><a name="synopsis">SYNOPSIS</a></h2>
+<p>
+package require <b>Tcl 8.5</b><br>
+package require <b>trofs ?0.4?</b><br>
+<br><table border=1 width=100% cellspacing=0 cellpadding=0><tr            bgcolor=lightyellow><td bgcolor=lightyellow><table 0 width=100% cellspacing=0 cellpadding=0><tr valign=top ><td ><a href="#1"><b class='cmd'>archive</b> <i class='arg'>directory</i> <i class='arg'>archive</i></a></td></tr>
+<tr valign=top ><td ><a href="#2"><b class='cmd'>mount</b> <i class='arg'>archive</i> ?<i class='arg'>mountpoint</i>?</a></td></tr>
+<tr valign=top ><td ><a href="#3"><b class='cmd'>unmount</b> <i class='arg'>mountpoint</i></a></td></tr>
+</table></td></tr></table>
+<h2><a name="description">DESCRIPTION</a></h2>
+<p>
+<p>
+
+The <strong>trofs</strong> package provides commands to create, mount, and
+unmount archive files containing read-only filesystems.  Mounted
+trofs archives contain files, directories, and symbolic links
+that can be opened and read by Tcl commands just as if they were part
+of the native filesystem.  The public commands documented here
+are all defined in and exported from the <em>::trofs</em> namespace.
+
+<h2><a name="commands">COMMANDS</a></h2>
+<p>
+<dl>
+
+<dt><a name="1"><b class='cmd'>archive</b> <i class='arg'>directory</i> <i class='arg'>archive</i></a><dd>
+
+
+The <b class='cmd'>archive</b> command creates a trofs archive file <i class='arg'>archive</i>
+from the contents of <i class='arg'>directory</i>.  Only the contents of
+<i class='arg'>directory</i> that are readable will be archived.  Unreadable
+contents will be silently omitted from the archive.  If <i class='arg'>directory</i>
+is not a readable directory at all, an empty archive will be created.
+If <i class='arg'>archive</i> is not an existing file, it will be created (assuming
+write permission to the directory containing it).  If <i class='arg'>archive</i>
+is an existing file, it must be writable and seekable.  The archive
+contents will be appended to
+the <i class='arg'>archive</i> file, starting with the character <strong>\u001A</strong>,
+which is the end of file character for Tcl's <b class='cmd'>source</b> command.
+This technique allows a trofs archive to be attached to a
+<b class='cmd'>source</b>-able Tcl script.  The <i class='arg'>archive</i> file created
+by <b class='cmd'>archive</b> is suitable for use as the first argument
+to <b class='cmd'>mount</b>.  The <b class='cmd'>archive</b> command returns an empty string.
+
+<br><br>
+<dt><a name="2"><b class='cmd'>mount</b> <i class='arg'>archive</i> ?<i class='arg'>mountpoint</i>?</a><dd>
+
+
+The <b class='cmd'>mount</b> command mounts the trofs archive stored in
+<i class='arg'>archive</i> as a read-only filesystem.  The archive
+file <i class='arg'>archive</i> must be a readable, seekable, trofs
+archive file created by the <b class='cmd'>archive</b> command.  If
+the <i class='arg'>mountpoint</i> argument is supplied, then 
+[<b class='cmd'>file exists</b> <i class='arg'>mountpoint</i>] must
+return <strong>0</strong>, and [<b class='cmd'>file system</b> <i class='arg'>mountpoint</i>]
+must return either <strong>native</strong> or <strong>trofs</strong> before
+the <b class='cmd'>mount</b> call.  If no <i class='arg'>mountpoint</i> argument is
+supplied, the <b class='cmd'>mount</b> command will generate a suitable
+mountpoint path.  After a successful <b class='cmd'>mount</b>, 
+[<b class='cmd'>file system</b> <i class='arg'>mountpoint</i>] will return <strong>trofs</strong>, 
+[<b class='cmd'>file isdirectory</b> <i class='arg'>mountpoint</i>] will return <strong>1</strong>,
+and the contents of <i class='arg'>archive</i> will be visible as
+contents of the directory <i class='arg'>mountpoint</i>.  The <b class='cmd'>mount</b>
+command returns the normalized path to <i class='arg'>mountpoint</i>.
+
+<br><br>
+<dt><a name="3"><b class='cmd'>unmount</b> <i class='arg'>mountpoint</i></a><dd>
+
+
+The <b class='cmd'>unmount</b> command reverses the effect of a prior <b class='cmd'>mount</b>
+command.  The <i class='arg'>mountpoint</i> argument must be a mountpoint created
+by a prior call to <b class='cmd'>mount</b>.  It can be in normalized form or not;
+it will be normalized by <b class='cmd'>unmount</b> as part of the search for a
+matching existing mountpoint.  If no such mountpoint is currently
+mounted, an error is raised.  Otherwise, the mount is undone, so
+that [<b class='cmd'>file exists</b> <i class='arg'>mountpoint</i>] once again
+returns <strong>0</strong>.  The <b class='cmd'>unmount</b> command returns an empty string.
+
+</dl>
+
+<h2><a name="example">EXAMPLE</a></h2>
+<p>
+
+<p>
+<p><table><tr><td bgcolor=black>&nbsp;</td><td><pre class='sample'>
+package require trofs
+namespace import trofs::*
+archive $directory $archive
+mount $archive $mountpoint
+</pre></td></tr></table></p>
+<p>
+At this point, both <i class='arg'>$directory</i> and <i class='arg'>$mountpoint</i> are directories,
+and their readable content should be identical.
+
+
+
+<h2><a name="see_also">SEE ALSO</a></h2>
+<p>
+file, source
+<h2><a name="keywords">KEYWORDS</a></h2>
+<p>
+filesystem
+</body></html>

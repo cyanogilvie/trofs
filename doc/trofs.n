@@ -1,0 +1,92 @@
+'\"
+'\" Generated from file './doc/trofs.man' by tcllib/doctools with format 'nroff'
+'\"
+.so man.macros
+.TH "trofs" n 0.4 trofs "Tcl Read-Only Filesystem"
+.BS
+.SH NAME
+trofs \- Manage read-only filesystems in archive file
+.SH SYNOPSIS
+package require \fBTcl  8.5\fR
+.sp
+package require \fBtrofs  ?0.4?\fR
+.sp
+\fBarchive\fR \fIdirectory\fR \fIarchive\fR
+.sp
+\fBmount\fR \fIarchive\fR ?\fImountpoint\fR?
+.sp
+\fBunmount\fR \fImountpoint\fR
+.sp
+.BE
+.SH DESCRIPTION
+.PP
+The \fBtrofs\fR package provides commands to create, mount, and
+unmount archive files containing read-only filesystems.  Mounted
+trofs archives contain files, directories, and symbolic links
+that can be opened and read by Tcl commands just as if they were part
+of the native filesystem.  The public commands documented here
+are all defined in and exported from the \fI::trofs\fR namespace.
+.SH COMMANDS
+.TP
+\fBarchive\fR \fIdirectory\fR \fIarchive\fR
+The \fBarchive\fR command creates a trofs archive file \fIarchive\fR
+from the contents of \fIdirectory\fR.  Only the contents of
+\fIdirectory\fR that are readable will be archived.  Unreadable
+contents will be silently omitted from the archive.  If \fIdirectory\fR
+is not a readable directory at all, an empty archive will be created.
+If \fIarchive\fR is not an existing file, it will be created (assuming
+write permission to the directory containing it).  If \fIarchive\fR
+is an existing file, it must be writable and seekable.  The archive
+contents will be appended to
+the \fIarchive\fR file, starting with the character \fB\\u001A\fR,
+which is the end of file character for Tcl's \fBsource\fR command.
+This technique allows a trofs archive to be attached to a
+\fBsource\fR-able Tcl script.  The \fIarchive\fR file created
+by \fBarchive\fR is suitable for use as the first argument
+to \fBmount\fR.  The \fBarchive\fR command returns an empty string.
+.TP
+\fBmount\fR \fIarchive\fR ?\fImountpoint\fR?
+The \fBmount\fR command mounts the trofs archive stored in
+\fIarchive\fR as a read-only filesystem.  The archive
+file \fIarchive\fR must be a readable, seekable, trofs
+archive file created by the \fBarchive\fR command.  If
+the \fImountpoint\fR argument is supplied, then
+[\fBfile exists\fR \fImountpoint\fR] must
+return \fB0\fR, and [\fBfile system\fR \fImountpoint\fR]
+must return either \fBnative\fR or \fBtrofs\fR before
+the \fBmount\fR call.  If no \fImountpoint\fR argument is
+supplied, the \fBmount\fR command will generate a suitable
+mountpoint path.  After a successful \fBmount\fR,
+[\fBfile system\fR \fImountpoint\fR] will return \fBtrofs\fR,
+[\fBfile isdirectory\fR \fImountpoint\fR] will return \fB1\fR,
+and the contents of \fIarchive\fR will be visible as
+contents of the directory \fImountpoint\fR.  The \fBmount\fR
+command returns the normalized path to \fImountpoint\fR.
+.TP
+\fBunmount\fR \fImountpoint\fR
+The \fBunmount\fR command reverses the effect of a prior \fBmount\fR
+command.  The \fImountpoint\fR argument must be a mountpoint created
+by a prior call to \fBmount\fR.  It can be in normalized form or not;
+it will be normalized by \fBunmount\fR as part of the search for a
+matching existing mountpoint.  If no such mountpoint is currently
+mounted, an error is raised.  Otherwise, the mount is undone, so
+that [\fBfile exists\fR \fImountpoint\fR] once again
+returns \fB0\fR.  The \fBunmount\fR command returns an empty string.
+.PP
+.SH EXAMPLE
+.PP
+.nf
+
+package require trofs
+namespace import trofs::*
+archive $directory $archive
+mount $archive $mountpoint
+
+.fi
+.PP
+At this point, both \fI$directory\fR and \fI$mountpoint\fR are directories,
+and their readable content should be identical.
+.SH "SEE ALSO"
+file, source
+.SH KEYWORDS
+filesystem

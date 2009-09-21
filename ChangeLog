@@ -1,0 +1,301 @@
+2007-07-11  Don Porter <donald.porter@nist.gov>
+
+	* generic/trofs.c:	Added some refCount management to avoid
+	problems with the Hairy Monster nature of Tcl_FSGetNormalizedPath().
+	Also silenced some compiler warnings.
+
+	* configure.in:	TEA 3.6 is now required to produce configure script
+	compatible with bash 3.1.  Bump to trofs 0.4.4.
+	* configure:	autoconf-2.59 with HEAD of TEA.
+	* library/trofs.tcl:	configure
+	* INSTALL:	Bump TEA to 3.6.
+
+2005-03-25  Don Porter <donald.porter@nist.gov>
+
+	* configure.in (AC_OUTPUT):	Make sure the library/trofs.tcl
+	and tests/load.tcl files get generated in the source tree, not
+	the build tree.
+	* configure:	autoconf-2.59.
+
+	* Makefile.in:	Removed tests/load.tcl from CONFIG_CLEAN_FILES.
+
+2005-03-24  Don Porter <donald.porter@nist.gov>
+
+	* Makefile.in:	Removed library/trofs.tcl from CONFIG_CLEAN_FILES.
+			Its absence following a `make distclean` interferes
+			with operation of the configure script.
+	* configure:	autoconf-2.59 (TEA updates)
+
+2005-03-14  Don Porter <donald.porter@nist.gov>
+
+	* Makefile.in:	Add library/trofs.tcl and tests/load.tcl to 
+			CONFIG_CLEAN_FILES so `make distclean` will clean them
+
+2005-03-10  Don Porter <donald.porter@nist.gov>
+
+	* generic/trofs.c:	Add safety #define for S_ISDIR()
+	* tests/trofs.test:	Constrain trofs-12.7 to unix 
+	* configure.in:		Bump to trofs 0.4.3
+	* configure:		autoconf-2.59
+	* library/trofs.tcl:	configure
+
+2005-03-04  Don Porter <donald.porter@nist.gov>
+
+	* INSTALL:		Note TEA 3.2 compliance.
+	* configure.in:		Bump to trofs 0.4.2
+	* configure:		autoconf-2.59  (w/ tclconfig updates)
+	* library/trofs.tcl:	configure
+
+2005-01-25  Don Porter <donald.porter@nist.gov>
+
+	* Makefile.in:		Add INSTALL to distributed file list.
+	* configure.in:		Bump to trofs 0.4.1
+	* configure:		autoconf-2.57  (w/ tclconfig updates)
+	* library/trofs.tcl:	configure
+
+2004-12-17  Don Porter <donald.porter@nist.gov>
+
+	* README:		New minor release: trofs 0.4
+	* license.terms:
+	* doc/trofs.man:
+	* configure.in:
+	* generic/trofs.c:	whitespace.
+	* configure:		autoconf-2.57
+	* library/trofs.tcl:	configure
+
+2004-12-16  Don Porter <donald.porter@nist.gov>
+
+	* INSTALL:		Instructions for use with Tcl 8.4
+	* Makefile.in:		pkgIndex.tcl to manage both 8.4 and 8.5+
+	* generic/trofs.c:	Force builds against Tcl 8.4 to use "-exact"
+				stubs initialization.
+	* configure.in:		Bump to trofs 0.3.15
+	* configure:		autoconf-2.57
+	* library/trofs.tcl:	configure
+	* tests/trofs.test:	More precise constraints.
+
+2004-12-15  Don Porter <donald.porter@nist.gov>
+
+	* generic/trofs.c:	Greater use of PACKAGE_NAME
+	* library/trofs.tcl.in:	Adapted to use [tcl_findLibrary]
+	* tests/load.tcl.in:	
+	* tests/trofs.test:	Constraints to handle testing against Tcl 8.4.
+	* Makefile.in:		Mods to support builds against Tcl 8.4 + dict.
+	* configure.in:		Bump to trofs 0.3.14
+	* configure:		autoconf-2.57
+	* library/trofs.tcl:	configure
+
+2004-12-14  Don Porter <donald.porter@nist.gov>
+
+	* generic/trofs.c:	Inlined init script.
+
+	* tests/trofs.test:	Made function and nesting tests more robust
+				and portable.
+
+	* Makefile.in:		replace mpexpand with dtplite
+	* configure.in:		Bump to trofs 0.3.13
+	* doc/trofs.man:	diction improvement
+	* generic/trofs.c:	comment typo
+	* configure:		autoconf-2.57; TEA updates.
+	* library/trofs.tcl:	configure
+
+2004-11-01  Don Porter <donald.porter@nist.gov>
+
+	* INSTALL:		Note TEA 3.1 conformance.
+	* configure.in:		Bump to trofs 0.3.12
+	* configure:		autoconf-2.57; TEA updates.
+	* library/trofs.tcl:	configure
+
+2004-07-12  Don Porter <donald.porter@nist.gov>
+
+	* Makefile.in:		Upgrade to TEA 3.1
+	* configure.in:		Bump to trofs 0.3.11
+	* configure:		autoconf-2.57
+	* library/trofs.tcl:	configure
+
+	* generic/trofs.c:	Work towards Tcl 8.4 support.
+
+2004-07-12  Don Porter <donald.porter@nist.gov>
+
+	* generic/trofs.c:	Disabled workaround for Tcl Bug 932314.
+				That bug is corrected in Tcl 8.4.7 and later.
+	* tests/trofs.test:	More tests.
+	* configure.in:		Bump to 0.3.10
+	* configure:		autoconf-2.57
+	* library/trofs.tcl:	configure
+
+2004-05-24  Don Porter <donald.porter@nist.gov>
+
+	* generic/trofs.c:	MatchInDirectory: Be sure [glob -types]
+				matches the targets of links.
+	* library/procs.tcl:	Archive even broken links.
+	* tests/trofs.test:	1.11, 13.16,17: tests for these changes.
+
+2004-05-28  Don Porter <donald.porter@nist.gov>
+
+	* generic/trofs.c:	Corrected code that assumed O_RDONLY was a
+				bit value.  Corrected NormalizePath to do
+				normalization of paths mounted outside the
+				native filesystem.  Corrected refcount bugs.
+				Normalize link values in OpenFileChannel to
+				avoid core failue to fully normalize.
+				Disallow mounting on "", and avoid crash
+				when mountpoint not claimed by any FS.
+	* tests/trofs.test:	More tests for above fixes and correct
+				operations of OpenFileChannel
+	* configure.in:		Bump to 0.3.9
+	* configure:		autoconf-2.57
+	* library/trofs.tcl:	configure
+
+2004-05-24  Don Porter <donald.porter@nist.gov>
+
+	* generic/trofs.c:	MatchInDirectory: Be sure [glob -types]
+				matches the targets of links.
+	* library/procs.tcl:	Archive even broken links.
+	* tests/trofs.test:	1.11, 13.16,17: tests for these changes.
+
+2004-05-20  Don Porter <donald.porter@nist.gov>
+
+	* generic/trofs.c:	Error message added to MatchInDirectory
+	* tests/trofs.test:	trofs-1.10: workaround Mac OSX encoding
+				issues with denormalized UTF.
+				trofs-13.*: start of MID tests.
+	* configure.in:		Bump to 0.3.8
+	* configure:		autoconf-2.57
+	* library/trofs.tcl:	configure
+
+2004-05-18  Don Porter <donald.porter@nist.gov>
+
+	* generic/trofs.c:	Bug fix.  Added missing refcount increment
+				on value returned by Link().
+	* tests/trofs.test:	New constraint: canDeleteBusyFile
+				(Thanks to Kevin Kenny).  Many new tests.
+	* configure.in:		Bump to 0.3.7
+	* configure:		autoconf-2.57
+	* library/trofs.tcl:	configure
+
+2004-05-13  Don Porter <donald.porter@nist.gov>
+
+	* generic/trofs.c:	Different bug fix for 22.0; this one shouldn't
+				have the troubles with infinite loops during
+				path normalization.  Now the directory cache
+				gets initialized with all mountpoints.  This
+				probably makes much of PIFS dead code. 
+	* tests/trofs.test:	More tests; work in progress
+	* configure.in:		Bump to 0.3.6
+	* configure:		autoconf-2.57
+	* library/trofs.tcl:	configure
+
+2004-05-12  Don Porter <donald.porter@nist.gov>
+
+	* generic/trofs.c:	Bug fix:  be sure directory cache doesn't
+	* tests/trofs.test:	hide nested mountpoints.  (test 22.0)
+	Also updated FetchTrofsPath to check invalid archive status, and
+	all code bits that stat and archive file to update that status.
+	Also improved efficiency by storing the cached directory objects
+	of the right objtype in the parent field.
+	* configure.in:		Bump to 0.3.5
+	* configure:		autoconf-2.57
+	* library/trofs.tcl:	configure
+
+2004-05-11  Don Porter <donald.porter@nist.gov>
+
+	* library/procs.tcl:	Replace [dict]s with arrays.
+	* tests/all.tcl:	Require Tcl 8.4 ([file normalize])
+	* tests/trofs.test:	More tests; work in progress.
+	* configure.in:		Bump to 0.3.4
+	* configure:		autoconf-2.57
+	* library/trofs.tcl:	configure
+
+	* generic/trofs.c:	Allow mounting of a link to an archive.
+
+	* library/procs.tcl (new):	Factor out un-parameterized part of
+	* library/trofs.tcl.in:		script library to avoid overwrite
+	of changes.	Corrected mistaken double archiving of links as
+	themselves and their targets.
+
+	* tests/trofs.test:	Many new tests.  Work in progress.
+
+	* configure.in:		Bump to 0.3.3
+
+	* configure:		autoconf-2.57
+	* library/trofs.tcl:	configure
+
+2004-05-07  Don Porter <donald.porter@nist.gov>
+
+	* library/trofs.tcl.in:	Forgot to set -translation binary on the
+	archive file.  Caused binary files not to be fully copied into
+	the archive.  Bump to 0.3.2.
+
+	* configure.in:			Updated test suite to use the
+	* tests/all.tcl:		tcltest package.  Made trofs.tcl
+	* tests/load.tcl.in (new):	a generated file.  Bumped to
+	* tests/trofs.test (new):	version 0.3.1.
+	* library/trofs.tcl.in (new):
+	* configure:		autoconf-2.57
+
+2004-05-06  Don Porter <donald.porter@nist.gov>
+
+	* generic/crew.h (new):	Some refactoring, and lots of work getting
+	* generic/crew.c (new):	the source code conformant to the Tcl
+	* generic/trofs.c:	Engineering Manual.
+	* configure.in:		Add crew.c to TEA_ADD_SOURCES.
+	* configure:		autoconf-2.57
+
+2004-05-04  Don Porter <donald.porter@nist.gov>
+
+	* Makefile.in:	Reworked targets so that `make dist` packages up
+	* configure.in:	pre-built documentation.  This way end users do
+	not need mpexpand; only those developers hacking on the docs.
+
+	* configure:	autoconf-2.57
+
+2004-05-03  Don Porter <donald.porter@nist.gov>
+
+	* generic/trofs.c:	Changed archive file format so that
+	* library/trofs.tcl:	signature comes at the end.  It's now
+	possible to append a trofs archive onto an existing trofs archive,
+	though it's a dumb idea (access to the first archive is lost).
+	Less seeking and less index data is required with the new format.
+	Thanks to Joe English for the suggestion.  Also corrected use of
+	utf-8 encoding when reading directory indices.
+
+	* README:		Bump to version 0.3
+	* configure.in:
+	* license.terms:
+	* doc/trofs.man:
+	* library/trofs.tcl
+
+	* configure:	autoconf-2.57
+
+2004-04-30  Don Porter <donald.porter@nist.gov>
+
+	* generic/trofs.c:	Additions from Kevin Kenny (with my
+	modifications) to support compiling on Windows systems.
+
+	* README:		Bump to version 0.2.2
+	* configure.in:
+	* license.terms:
+	* doc/trofs.man:
+	* library/trofs.tcl
+
+	* configure:	autoconf-2.57 - with updated tclconfig/tcl.m4
+	to correct TCL_WIDE_INT_IS_LONG detection on Windows.
+
+2004-04-28  Don Porter <donald.porter@nist.gov>
+
+	* Makefile.in:	Corrected typo in pkgIndex.tcl generation.
+
+	* generic/trofs.c:	Improve startup error messages.
+
+	* README:		Bump to version 0.2.1
+	* configure.in:
+	* license.terms:
+	* doc/trofs.man:
+	* library/trofs.tcl
+
+	* configure:	autoconf-2.57
+
+2004-04-27  Don Porter <donald.porter@nist.gov>
+
+	Initial import of sources into CVS control.

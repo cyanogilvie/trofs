@@ -1,0 +1,4 @@
+package present -exact @PACKAGE_NAME@ @PACKAGE_VERSION@
+namespace eval ::@PACKAGE_NAME@ {
+    source [file join $Library procs.tcl]
+}

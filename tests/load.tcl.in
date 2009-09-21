@@ -1,0 +1,5 @@
+package require Tcl 8.4
+set env(TROFS_LIBRARY) \
+	[file join [file dirname [file dirname [info script]]] library]
+package require -exact @PACKAGE_NAME@ @PACKAGE_VERSION@
+namespace import ::@PACKAGE_NAME@::*

@@ -1,0 +1,2454 @@
+namespace eval ::trofs::test {
+    package require tcltest 2.2
+
+    namespace import ::tcltest::configure
+    namespace import ::tcltest::loadTestedCommands
+    namespace import ::tcltest::test
+    namespace import ::tcltest::testsDirectory
+    namespace import ::tcltest::makeFile
+    namespace import ::tcltest::makeDirectory
+    namespace import ::tcltest::removeDirectory
+    namespace import ::tcltest::removeFile
+    namespace import ::tcltest::testConstraint
+    namespace import ::tcltest::cleanupTests
+
+    eval configure $::argv
+    loadTestedCommands
+
+    # Determine whether we can do 'file delete' when we have a handle
+    # to a file open.
+
+    set archive [makeFile {} archive]
+    set f [open $archive w]
+    testConstraint canDeleteBusyFile [expr {![catch {file delete $archive}]}]
+    catch {close $f}
+    catch {file delete $archive}
+
+    testConstraint tcl8.5 [package vsatisfies [package provide Tcl] 8.5]
+
+    # Check whether Tcl Bug 833713 is still buggy.
+    set dir [makeDirectory dir]
+    makeFile {} f $dir
+    set link [makeFile {} link $dir]
+    removeFile link $dir
+
+    testConstraint TclBug833713Fixed [expr {[catch {file link $link f}] == 0}]
+
+    file delete $link
+    removeDirectory dir
+
+    # Check whether Tcl Bug 943995 is still buggy.
+    set dir [makeDirectory dir]
+    makeFile contents file $dir
+    set archive [makeFile {} archive]
+    archive $dir $archive
+    set m [mount $archive]
+
+    testConstraint TclBug943995Fixed [expr {[catch {glob $m}] == 0}]
+
+    unmount $m
+    removeFile archive
+    removeFile file $dir
+    removeDirectory dir
+
+    test trofs-0.0 {Trofs_Init: conflicting version check} -setup {
+	interp create slave
+	slave eval package provide trofs 999
+	set v [package provide trofs]
+	set script [package ifneeded trofs $v]
+    } -body {
+	slave eval $script
+    } -cleanup {
+	interp delete slave
+    } -match glob -returnCodes error -result \
+    {conflicting versions provided for package "trofs": 999, then *}
+
+    test trofs-0.1 {Trofs_Init: conflicting version check} -setup {
+	interp create slave
+	set v [package provide trofs]
+	slave eval package provide trofs $v
+	set script [package ifneeded trofs $v]
+    } -body {
+	slave eval $script
+	slave eval namespace exists ::trofs
+    } -cleanup {
+	interp delete slave
+    } -result 1
+
+    test trofs-0.2 {Trofs_Init: registered configuration} -body {
+	::trofs::pkgconfig get scriptdir,runtime
+    } -match regexp -result .+ -constraints tcl8.5
+
+    test trofs-0.3 {Trofs_Init: registered configuration} tcl8.5 {
+	file normalize [::trofs::pkgconfig get scriptdir,source]
+    } [file normalize [file join [testsDirectory] .. library]]
+
+
+    test trofs-1.0 {archive: permissions} -constraints unix -setup {
+	set archive [makeFile {} archive]
+	set dir [makeDirectory dir]
+	file attributes $archive -permissions a-w
+    } -body {
+	archive $dir $archive
+    } -cleanup {
+	removeDirectory dir
+	removeFile archive
+    } -returnCodes error -match glob -result [subst \
+    {couldn't open "*archive": permission denied}]
+
+    proc sigBytes {} {
+	return [scan \u001atrofs01 %c%c%c%c%c%c%c%c]
+    }
+    test trofs-1.1 {archive: signature only} -setup {
+	set archive [makeFile {} archive]
+	set dir [makeDirectory dir]
+    } -body {
+	archive $dir $archive
+	file size $archive
+    } -cleanup {
+	removeDirectory dir
+	removeFile archive
+    } -result 14
+
+    test trofs-1.2 {archive: signature only} -setup {
+	set archive [makeFile {} archive]
+	set dir [makeDirectory dir]
+    } -body {
+	archive $dir $archive
+	set f [open $archive]
+	fconfigure $f -translation binary
+	binary scan [read $f] c* val
+	set val
+    } -cleanup {
+	close $f
+	removeDirectory dir
+	removeFile archive
+    } -result [subst {10 26 [sigBytes] 0 0 0 0}]
+
+    test trofs-1.3 {archive: inf recursion} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive $dir]
+    } -body {
+	archive $dir $archive
+    } -cleanup {
+	removeFile archive $dir
+	removeDirectory dir
+    } -result {}
+
+    test trofs-1.4 {archive: inf recursion} -constraints unix -setup {
+	set dir [makeDirectory dir]
+	file link [file join $dir s] .
+	set archive [makeFile {} archive]
+    } -body {
+	archive $dir $archive
+    } -cleanup {
+	file delete [file join $dir s]
+	removeFile archive
+	removeDirectory dir
+    } -result {}
+
+    test trofs-1.5 {archive: link format} -constraints {
+	unix TclBug833713Fixed
+    } -setup {
+	set dir [makeDirectory dir]
+	file link [file join $dir s] .
+	set archive [makeFile {} archive]
+    } -body {
+	archive $dir $archive
+	set f [open $archive]
+	fconfigure $f -translation binary
+	binary scan [read $f] c* val
+	set val
+    } -cleanup {
+	close $f
+	file delete [file join $dir s]
+	removeFile archive
+	removeDirectory dir
+    } -result [join [subst {
+	10 26 
+	[scan s %c] 32
+	123
+	    [scan L %c] 32
+	    [scan . %c]
+	125 [sigBytes] 0 0 0 7
+    }]]
+
+    test trofs-1.6 {archive: file format} -setup {
+	set dir [makeDirectory dir]
+	close [open [file join $dir f] w]
+	set archive [makeFile {} archive]
+    } -body {
+	archive $dir $archive
+	set f [open $archive]
+	fconfigure $f -translation binary
+	binary scan [read $f] c* val
+	set val
+    } -cleanup {
+	close $f
+	file delete [file join $dir f]
+	removeFile archive
+	removeDirectory dir
+    } -result [join [subst {
+	10 26 
+	[scan f %c] 32
+	123
+	    [scan F %c] 32
+	    [scan 0 %c] 32
+	    [scan 0 %c]
+	125 [sigBytes] 0 0 0 9
+    }]]
+
+    test trofs-1.7 {archive: dir format} -setup {
+	set dir [makeDirectory dir]
+	makeDirectory s $dir
+	set archive [makeFile {} archive]
+    } -body {
+	archive $dir $archive
+	set f [open $archive]
+	fconfigure $f -translation binary
+	binary scan [read $f] c* val
+	set val
+    } -cleanup {
+	close $f
+	removeDirectory s $dir
+	removeFile archive
+	removeDirectory dir
+    } -result [join [subst {
+	10 26 
+	[scan s %c] 32
+	123
+	    [scan D %c] 32
+	    [scan 0 %c] 32
+	    [scan 0 %c]
+	125 [sigBytes] 0 0 0 9
+    }]]
+
+    test trofs-1.8 {archive: skip unreadable file} -constraints unix -setup {
+	set dir [makeDirectory dir]
+	close [open [file join $dir f] w]
+	close [open [file join $dir f2] w 0200] ;# unreadable
+	set archive [makeFile {} archive]
+    } -body {
+	archive $dir $archive
+	set f [open $archive]
+	fconfigure $f -translation binary
+	binary scan [read $f] c* val
+	set val
+    } -cleanup {
+	close $f
+	file delete [file join $dir f2]
+	file delete [file join $dir f]
+	removeFile archive
+	removeDirectory dir
+    } -result [join [subst {
+	10 26 
+	[scan f %c] 32
+	123
+	    [scan F %c] 32
+	    [scan 0 %c] 32
+	    [scan 0 %c]
+	125 [sigBytes] 0 0 0 9
+    }]]
+
+    test trofs-1.9 {archive: all byte values work in archived file} -setup {
+	set dir [makeDirectory dir]
+	set p [makeFile {} f $dir]
+	set f [open $p w]
+	fconfigure $f -translation binary
+	set contents {}
+	for {set v 0} {$v < 256} {incr v} {
+	    set x [binary format c $v]
+	    puts -nonewline $f $x
+	    append contents $x
+	}
+	close $f
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	set p [file join $m f]
+    } -body {
+	set f [open $p]
+	fconfigure $f -translation binary
+	set compare [read $f]
+	list [file size $p] [string equal $contents $compare]
+    } -cleanup {
+	close $f
+	removeFile archive
+	removeFile f $dir
+	removeDirectory dir
+    } -result {256 1}
+
+    test trofs-1.10 {archive: Unicode file name} -setup {
+	set dir [makeDirectory dir]
+	set p [makeFile {} f\u00E9e $dir]
+	set tail [glob -tails -directory $dir f*]
+	set f [open $p w]
+	fconfigure $f -translation binary
+	set contents {}
+	for {set v 0} {$v < 256} {incr v} {
+	    set x [binary format c $v]
+	    puts -nonewline $f $x
+	    append contents $x
+	}
+	close $f
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	set p [file join $m $tail]
+    } -body {
+	set f [open $p]
+	fconfigure $f -translation binary
+	set compare [read $f]
+	list [file size $p] [string equal $contents $compare]
+    } -cleanup {
+	close $f
+	removeFile archive
+	removeFile f\u00E9e $dir
+	removeDirectory dir
+    } -result {256 1}
+
+    test trofs-1.11 {archive: archive even broken links} -constraints {
+	TclBug833713Fixed
+    } -setup {
+	set dir [makeDirectory dir]
+	makeFile {} bar $dir
+	set link [makeFile {} link $dir]
+	removeFile link $dir
+	file link $link bar
+	removeFile bar $dir
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	glob -tails -directory $m link
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	file delete $link
+	removeDirectory dir
+    } -result link
+
+
+    test trofs-2.0 {UnmountObjCmd: syntax} -body {
+	unmount
+    } -returnCodes error -match glob -result {wrong # args*}
+
+    test trofs-2.1 {UnmountObjCmd: syntax} -body {
+	unmount foo bar
+    } -returnCodes error -match glob -result {wrong # args*}
+
+    test trofs-2.2 {UnmountObjCmd: invalid mount} -body {
+	unmount foo 
+    } -returnCodes error -result {could not unmount "foo": not a trofs mount}
+
+    test trofs-2.3 {UnmountObjCmd: repeated unmount} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	unmount $m
+	unmount $m
+    } -cleanup {
+	removeFile archive
+	removeDirectory dir
+    } -returnCodes error -match glob -result \
+    {could not unmount "*": not a trofs mount}
+
+    test trofs-2.4 {UnmountObjCmd: repeated unmount} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive foo]
+    } -body {
+	unmount foo
+	unmount foo
+    } -cleanup {
+	removeFile archive
+	removeDirectory dir
+    } -returnCodes error -match glob -result \
+    {could not unmount "*": not a trofs mount}
+
+
+    test trofs-3.0 {MountObjCmd: syntax} -body {
+	mount
+    } -returnCodes error -match glob -result {wrong # args*}
+
+    test trofs-3.1 {MountObjCmd: syntax} -body {
+	mount x y z
+    } -returnCodes error -match glob -result {wrong # args*}
+
+    test trofs-3.2 {MountObjCmd: no such file} -setup {
+	set archive [makeFile {} archive]
+	removeFile archive
+    } -body {
+	mount $archive
+    } -returnCodes error -match glob -result \
+    {could not mount "*archive": no such file or directory}
+
+    test trofs-3.3 {MountObjCmd: link to archive} -constraints unix -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set link [file join [file dirname $archive] link]
+	file link $link archive
+    } -body {
+	set m [mount $link]
+    } -cleanup {
+	unmount $m
+	file delete $link
+	removeFile archive
+	removeDirectory dir
+    } -match regexp -result {trofs://[0-9]+}
+
+    test trofs-3.4 {MountObjCmd: broken link} -constraints unix -setup {
+	set archive [makeFile {} archive]
+	set link [file join [file dirname $archive] link]
+	file link $link archive
+	removeFile archive
+    } -body {
+	mount $link
+    } -cleanup {
+	file delete $link
+    } -returnCodes error -match glob -result \
+    {could not mount "*link": no such file or directory}
+
+    test trofs-3.5 {MountObjCmd: not reg file} -setup {
+	set dir [makeDirectory dir]
+    } -body {
+	mount $dir
+    } -cleanup {
+	removeDirectory dir
+    } -returnCodes error -match glob -result \
+    {could not mount "*dir": not a regular file}
+
+    test trofs-3.6 {MountObjCmd: permissions} -constraints unix -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	file attributes $archive -permissions a-r
+    } -body {
+	mount $archive
+    } -cleanup {
+	removeFile archive
+	removeDirectory dir
+    } -returnCodes error -match glob -result \
+    {could not mount "*archive": permission denied}
+
+    test trofs-3.7 {MountObjCmd: link loop} -constraints {
+	unix
+    } -setup {
+	set link [makeFile {} link]
+	removeFile link
+	exec ln -s $link $link
+    } -body {
+	mount $link
+    } -cleanup {
+	file delete $link
+    } -returnCodes error -match glob -result \
+    {could not mount "*link": too many levels of symbolic links}
+
+    test trofs-3.8 {MountObjCmd: mountpoint generation} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+    } -body {
+	set m [mount $archive]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeDirectory dir
+    } -match regexp -result {trofs://[0-9]+}
+
+    catch {package require Tcltest}
+    testConstraint testsimplefilesystem [string equal testsimplefilesystem \
+	    [info commands testsimplefilesystem]]
+
+    test trofs-3.9 {MountObjCmd: mount into other FS} -constraints {
+	testsimplefilesystem
+    } -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	testsimplefilesystem 1
+    } -body {
+	mount $archive simplefs:/mountpoint
+    } -cleanup {
+	testsimplefilesystem 0
+	removeFile archive
+	removeDirectory dir
+    } -returnCodes error -result {could not mount onto\
+	    "simplefs:/mountpoint": cannot nest filesystems (Tcl Bug 941872)}
+
+    test trofs-3.10 {MountObjCmd: mountpoint exists} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set mountpoint [makeFile {} mountpoint]
+    } -body {
+	mount $archive $mountpoint
+    } -cleanup {
+	removeFile mountpoint
+	removeFile archive
+	removeDirectory dir
+    } -returnCodes error -match glob -result \
+    {could not mount onto "*mountpoint": file exists}
+
+    test trofs-3.11 {MountObjCmd: mountpoint generation loop} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	regexp {trofs://([0-9]+)} $m -> serial
+	unmount $m
+	incr serial
+	set m [mount $archive trofs://$serial]
+    } -body {
+	set m2 [mount $archive]
+	regexp {trofs://([0-9]+)} $m2 -> serial2
+	list $serial $serial2 [expr {$serial == $serial2}]
+    } -cleanup {
+	unmount $m2
+	unmount $m
+	removeFile archive
+	removeDirectory dir
+    } -match regexp -result {[0-9]+ [0-9]+ 0}
+
+    test trofs-3.12 {MountObjCmd: mountpoint is empty string} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set mountpoint [makeFile {} mountpoint]
+    } -body {
+	mount $archive ""
+    } -cleanup {
+	removeFile mountpoint
+	removeFile archive
+	removeDirectory dir
+    } -returnCodes error -result \
+    {could not mount onto "": empty string mountpoint is not supported}
+
+    test trofs-3.13 {MountObjCmd: [file system] result} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+    } -body {
+	set m [mount $archive]
+	file system $m
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeDirectory dir
+    } -result trofs
+
+    test trofs-3.14 {MountObjCmd: [file isdirectory] result} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+    } -body {
+	set m [mount $archive]
+	file isdirectory $m
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeDirectory dir
+    } -result 1
+
+    test trofs-3.15 {MountObjCmd: identical contents} -setup {
+	set dir [makeDirectory dir]
+	set sub [makeDirectory sub $dir]
+	makeFile contents file $sub
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	set f [open [file join $m sub file]]
+	set one [read $f]
+	close $f
+	set f [open [file join $sub file]]
+	set two [read $f]
+	close $f
+	string equal $one $two
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeFile file $sub
+	removeDirectory sub $dir
+	removeDirectory dir
+    } -result 1
+
+
+    test trofs-4.0 {VerifyTrofsArchive: too short} -setup {
+	set archive [makeFile {} archive]
+    } -body {
+	mount $archive
+    } -cleanup {
+	removeFile archive
+    } -returnCodes error -match glob -result \
+    {could not mount "*archive": not a trofs archive}
+
+    test trofs-4.1 {VerifyTrofsArchive: no sig} -setup {
+	set archive [makeFile {abcdefghijkl} archive]
+    } -body {
+	mount $archive
+    } -cleanup {
+	removeFile archive
+    } -returnCodes error -match glob -result \
+    {could not mount "*archive": not a trofs archive}
+
+    test trofs-4.2 {VerifyTrofsArchive: obsolete sig} -setup {
+	set archive [makeFile {} archive]
+	removeFile archive
+	set f [open $archive w]
+	fconfigure $f -translation binary
+	puts -nonewline $f \u001Atrofs001234
+	close $f
+    } -body {
+	mount $archive
+    } -cleanup {
+	file delete $archive
+    } -returnCodes error -match glob -result \
+    {could not mount "*archive": incompatible trofs archive}
+
+    test trofs-4.3 {VerifyTrofsArchive: obsolete sig} -setup {
+	set archive [makeFile {} archive]
+	removeFile archive
+	set f [open $archive w]
+	fconfigure $f -translation binary
+	puts -nonewline $f \u001Atrofs101234
+	close $f
+    } -body {
+	mount $archive
+    } -cleanup {
+	file delete $archive
+    } -returnCodes error -match glob -result \
+    {could not mount "*archive": incompatible trofs archive}
+
+
+    test trofs-5.0 {FetchTrofsPath: stale file handle} empty {
+	# To force an ESTALE from the first FetchTrofsPath test
+	# requires timing a particular sequence of operations in
+	# multiple threads with "sub-command" resolution.
+	# Not clear how to do that.
+    } {}
+
+    test trofs-5.1 {FetchTrofsPath: stale file handle} -setup {
+	# The ESTALE from a changed archive is easier to test.
+	set dir [makeDirectory dir]
+	set sub [makeDirectory sub $dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	set path [file join $m sub]
+	set result [file system $path]
+	lappend result [file isdirectory $path]	;# Can see into archive
+	removeFile archive
+	lappend result [file isdirectory $path]	;# Mount knows it's invalid
+	lappend result [file system $path]	;# But $path holds old ref.
+	string index $path 5			;# Force shimmer
+	lappend result [file system $path]
+    } -cleanup {
+	unmount $m
+	removeDirectory sub $dir
+	removeDirectory dir
+    } -result {trofs 1 0 trofs native}
+
+    test trofs-5.2 {FetchTrofsPath: stale file handle} -constraints {
+	canDeleteBusyFile
+    } -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	set path [file join $m file]
+	set result [file system $path]
+	lappend result [file isfile $path]	;# Can see into archive
+	set f [open $path]
+	removeFile archive
+	lappend result [file isfile $path]	;# Mount knows it's invalid
+	lappend result [file system $path]	;# But $path holds old ref.
+	string index $path 5			;# Force shimmer
+	lappend result [file system $path]
+    } -cleanup {
+	close $f
+	unmount $m
+	removeFile file $dir
+	removeDirectory dir
+    } -result {trofs 1 0 trofs native}
+
+    test trofs-5.3 {FetchTrofsPath: stale file handle} -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	set path [file join $m file]
+	set result [file system $path]
+	lappend result [file isfile $path]	;# Can see into archive
+	set f [open $path]
+	after 1000
+	file mtime $archive [clock seconds]
+	lappend result [file isfile $path]	;# Mount knows it's invalid
+	lappend result [file system $path]	;# But $path still holds old ref.
+	string index $path 5			;# Force shimmer
+	lappend result [file system $path]
+    } -cleanup {
+	close $f
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -result {trofs 1 0 trofs native}
+
+
+    test trofs-6.0 {GetDirIndexFromArchive: archive disappears} -setup {
+	set dir [makeDirectory dir]
+	makeDirectory sub $dir
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	removeFile archive
+	file system [file join $m sub f]
+    } -cleanup {
+	unmount $m
+	removeDirectory sub $dir
+	removeDirectory dir
+    } -result native
+
+    test trofs-6.1 {	GetDirIndexFromArchive: archive disappears,
+			but cache preserves fs claim} -setup {
+	set dir [makeDirectory dir]
+	makeDirectory sub $dir
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	set path [file join $m sub]
+	file system $path
+	removeFile archive
+    } -body {
+	set result [file system [file join $path f]]
+	lappend result [file isdirectory $path]
+	lappend result [file system [file join $path f]]
+    } -cleanup {
+	unmount $m
+	removeDirectory sub $dir
+	removeDirectory dir
+    } -match glob -result [list * 0 native]
+
+
+    test trofs-7.0 {PathInFilesystem: continue claim on stale mounts} -setup {
+	# The ESTALE from a changed archive is easier to test.
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	set path $m
+	set result [file system $path]
+	lappend result [file isdirectory $path]	;# Can see into archive
+	removeFile archive
+	lappend result [file isdirectory $path]	;# Mount knows it's invalid
+	lappend result [file system $path]	;# But $path still holds old ref.
+	string index $path 5			;# Force shimmer
+	lappend result [file system $path]
+	set result
+    } -cleanup {
+	unmount $m
+	removeDirectory dir
+    } -result {trofs 1 0 trofs trofs}
+
+    test trofs-7.1 {PathInFilesystem: claim based on normalized path} -setup {
+	set dir [makeDirectory dir]
+	set sub [makeDirectory sub $dir]
+	makeFile contents file $sub
+	set link [makeFile {} link $dir]
+	removeFile link $dir
+	file link $link sub
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file system [file join $m link file]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	file delete $link
+	removeFile file $sub
+	removeDirectory sub $dir
+	removeDirectory dir
+    } -result trofs -constraints TclBug833713Fixed
+
+
+    test trofs-8.0 {NormalizePath: links across filesystems} -constraints {
+	TclBug931847Fixed
+    } -setup {
+	set dir [makeDirectory dir]
+	set dir2 [makeDirectory dir2]
+	set link [makeFile {} link $dir]
+	removeFile link $dir
+	file link $link ../dir2
+	set mp [makeFile {} mp]
+	removeFile mp
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive $mp]
+    } -body {
+	string equal \
+		[file normalize [file join $m link file]] \
+		[file normalize [file join $link file]] 
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	file delete $link
+	removeDirectory dir2
+	removeDirectory dir
+    }  -result 1
+
+    test trofs-8.1 {NormalizePath: purge links} -constraints {
+	TclBug833713Fixed
+    } -setup {
+	set dir [makeDirectory dir]
+	set sub [makeDirectory sub $dir]
+	makeFile contents file $sub
+	set link [makeFile {} link $dir]
+	removeFile link $dir
+	file link $link sub
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file normalize [file join $m link file]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	file delete $link
+	removeFile file $sub
+	removeDirectory sub $dir
+	removeDirectory dir
+    } -match glob -result {trofs://*/sub/file}
+
+    test trofs-8.2 {NormalizePath: mountpoint outside native} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file normalize $m
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeDirectory dir
+    } -match regexp -result {trofs://[0-9]+}
+
+    test trofs-8.3 {NormalizePath: mountpoint outside native} -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file normalize [file join $m file]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -match regexp -result {trofs://[0-9]+/file}
+
+    test trofs-8.4 {NormalizePath: mountpoint outside native} -setup {
+	set dir [makeDirectory dir]
+	set sub [makeDirectory sub $dir]
+	makeFile contents file $sub
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file normalize [file join $m sub file]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeFile file $sub
+	removeDirectory sub $dir
+	removeDirectory dir
+    } -match regexp -result {trofs://[0-9]+/sub/file}
+
+    test trofs-8.5 {NormalizePath: unmounted mountpoint outside native} -body {
+	file normalize trofs://noSuchMount
+    } -result trofs://noSuchMount
+
+    test trofs-8.6 {NormalizePath: unmounted mountpoint outside native} -body {
+	file normalize trofs://noSuchMount/foo/bar
+    } -result trofs://noSuchMount/foo/bar
+
+    test trofs-8.7 {NormalizePath: verified not ours} -setup {
+	set dir [makeDirectory dir]
+    } -body {
+	file normalize [file join $dir noSuchDir noSuchFile]
+    } -cleanup {
+	removeDirectory dir
+    }  -match glob -result */noSuchDir/noSuchFile
+
+
+    test trofs-9.0 {Stat: link loop} -constraints {
+	unix
+    } -setup {
+	set dir [makeDirectory dir]
+	set link [makeFile {} link $dir]
+	removeFile link $dir
+	exec ln -s link $link
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file stat [file join $m link] stat
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	file delete $link
+	removeDirectory dir
+    } -returnCodes error -match glob -result\
+    {could not read "*/link": too many levels of symbolic links}
+
+    test trofs-9.1 {Stat: broken link} -constraints {
+	TclBug833713Fixed
+    } -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set link [makeFile {} link $dir]
+	removeFile link $dir
+	file link $link file
+	removeFile file $dir
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file stat [file join $m link] stat
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	file delete $link
+	removeDirectory dir
+    } -returnCodes error -match glob -result\
+    {could not read "*/link": no such file or directory}
+
+    test trofs-9.2 {Access: valid link} -constraints {
+	TclBug833713Fixed
+    } -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set link [makeFile {} link $dir]
+	removeFile link $dir
+	file link $link file
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file stat [file join $m link] stat
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	file delete $link
+	removeFile file $dir
+	removeDirectory dir
+    } -result {}
+
+
+    test trofs-10.0 {Lstat: no such file} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file stat [file join $m file] stat
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeDirectory dir
+    } -returnCodes error -match glob -result\
+    {could not read "*/file": no such file or directory}
+
+    test trofs-10.1 {Lstat: no such file} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file lstat [file join $m file] stat
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeDirectory dir
+    } -returnCodes error -match glob -result\
+    {could not read "*/file": no such file or directory}
+
+    test trofs-10.2 {Lstat: no such file} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file stat [file join $m sub file] stat
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeDirectory dir
+    } -returnCodes error -match glob -result\
+    {could not read "*/file": no such file or directory}
+
+    test trofs-10.3 {Lstat: no such file} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file stat [file join $m sub file] stat
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeDirectory dir
+    } -returnCodes error -match glob -result\
+    {could not read "*/file": no such file or directory}
+
+    test trofs-10.4 {Lstat: link loop} -constraints {
+	unix
+    } -setup {
+	set dir [makeDirectory dir]
+	set link [makeFile {} link $dir]
+	removeFile link $dir
+	exec ln -s link $link
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file lstat [file join $m link] stat
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	file delete $link
+	removeDirectory dir
+    } -result {}
+
+    test trofs-10.5 {Stat: broken link} -constraints TclBug833713Fixed -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set link [makeFile {} link $dir]
+	removeFile link $dir
+	file link $link file
+	removeFile file $dir
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file lstat [file join $m link] stat
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	file delete $link
+	removeDirectory dir
+    } -result {}
+
+    test trofs-10.6 {Access: valid link} -constraints TclBug833713Fixed -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set link [makeFile {} link $dir]
+	removeFile link $dir
+	file link $link file
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file lstat [file join $m link] stat
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	file delete $link
+	removeFile file $dir
+	removeDirectory dir
+    } -result {}
+
+    test trofs-10.7 {Access: stat values} -setup {
+	set dir [makeDirectory dir]
+	set file [makeFile contents file $dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file lstat [file join $m file] stat
+	list [expr {$stat(size)==[file size $file]}] [expr {$stat(nlink)==0}]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -result {1 1}
+
+    test trofs-10.8 {Access: file type} -setup {
+	set dir [makeDirectory dir]
+	set file [makeFile contents file $dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file type [file join $m file]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -result file
+
+    test trofs-10.9 {Access: file type} -setup {
+	set dir [makeDirectory dir]
+	set sub [makeDirectory sub $dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file type [file join $m sub]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeDirectory sub $dir
+	removeDirectory dir
+    } -result directory
+
+    test trofs-10.10 {Access: file type} -constraints TclBug833713Fixed -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set link [makeFile {} link $dir]
+	removeFile link $dir
+	file link $link file
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file type [file join $m link]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	file delete $link
+	removeFile file $dir
+	removeDirectory dir
+    } -result link
+
+
+    test trofs-11.0 {Access: link loop} -constraints {
+	unix
+    } -setup {
+	set dir [makeDirectory dir]
+	set link [makeFile {} link $dir]
+	removeFile link $dir
+	exec ln -s link $link
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file exists [file join $m link]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	file delete $link
+	removeDirectory dir
+    } -result 0
+
+    test trofs-11.1 {Access: broken link} -constraints {
+	TclBug833713Fixed 
+    } -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set link [makeFile {} link $dir]
+	removeFile link $dir
+	file link $link file
+	removeFile file $dir
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file exists [file join $m link]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	file delete $link
+	removeDirectory dir
+    } -result 0
+
+    test trofs-11.2 {Access: valid link} -constraints TclBug833713Fixed -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set link [makeFile {} link $dir]
+	removeFile link $dir
+	file link $link file
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file exists [file join $m link]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	file delete $link
+	removeFile file $dir
+	removeDirectory dir
+    } -result 1
+
+    test trofs-11.3 {Access: no such file} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file exists [file join $m file]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeDirectory dir
+    } -result 0
+
+    test trofs-11.4 {Access: no such file} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file exists [file join $m sub file]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeDirectory dir
+    } -result 0
+
+    test trofs-11.5 {Access: trofs is read-only} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file writable $m
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeDirectory dir
+    } -result 0
+
+    test trofs-11.6 {Access: trofs is read-only} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file executable $m
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeDirectory dir
+    } -result 0
+
+    test trofs-11.7 {Access: success} -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file readable [file join $m file]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -result 1
+
+
+    test trofs-12.0 {OpenFileChannel: archive touch} -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	after 1000
+	file mtime $archive [clock seconds]
+    } -body {
+	open [file join $m file]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -returnCodes error -match glob -result\
+    {cannot open "*/file": stale file handle}
+
+    test trofs-12.1 {OpenFileChannel: archive touch} -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	after 1000
+	file mtime $archive [clock seconds]
+    } -body {
+	file isdirectory $m
+	open [file join $m file]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -returnCodes error -match glob -result\
+    {couldn't open "*/file": no such file or directory}
+    # Note different error message above; this error comes from core Tcl
+
+    test trofs-12.2 {OpenFileChannel: no such file} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	open [file join $m file]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeDirectory dir
+    } -returnCodes error -match glob -result\
+    {cannot open "*/file": no such file}
+
+    test trofs-12.3 {OpenFileChannel: no such file} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	open $m
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeDirectory dir
+    } -returnCodes error -match glob -result\
+    {cannot open "*": illegal operation on a directory}
+
+    test trofs-12.4 {OpenFileChannel: link loop} -constraints {
+	unix
+    } -setup {
+	set dir [makeDirectory dir]
+	set link [makeFile {} link $dir]
+	removeFile link $dir
+	exec ln -s link $link
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	open [file join $m link]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	file delete $link
+	removeDirectory dir
+    } -returnCodes error -match glob -result\
+    {cannot open "*/link": too many levels of symbolic links}
+
+    test trofs-12.5 {OpenFileChannel: link to file} -constraints {
+	TclBug833713Fixed 
+    } -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set link [makeFile {} link $dir]
+	removeFile link $dir
+	file link $link file
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	set f [open [file join $m link]]
+	read $f
+    } -cleanup {
+	close $f
+	unmount $m
+	removeFile archive
+	file delete $link
+	removeFile file $dir
+	removeDirectory dir
+    }  -result contents\n
+
+    test trofs-12.6 {OpenFileChannel: writing denied} -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	set path [file join $m file]
+	set result {}
+	lappend result [catch {open $path r+} f] $f
+	lappend result [catch {open $path w} f] $f
+	lappend result [catch {open $path a} f] $f
+	lappend result [catch {open $path r} f] $f
+	lappend result [read -nonewline $f]
+    } -cleanup {
+	close $f
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    }  -match glob -result {1 {cannot open "*": write permission denied} 1 {cannot open "*": write permission denied} 1 {cannot open "*": write permission denied} 0 file* contents}
+
+    test trofs-12.7 {OpenFileChannel: link to writable file} -constraints {
+	unix
+    } -setup {
+	set dir [makeDirectory dir]
+	set file [makeFile contents file]
+	set link [makeFile {} link $dir]
+	removeFile link $dir
+	set mp [makeFile {} mp]
+	removeFile mp
+	file link $link $file
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive $mp]
+    } -body {
+	set f [open [file join $m link] a]
+	puts $f more
+	close $f
+	set f [open [file join $m link]]
+	read $f
+    } -cleanup {
+	catch {close $f}
+	unmount $m
+	removeFile archive
+	file delete $link
+	removeFile file
+	removeDirectory dir
+    }  -result contents\nmore\n
+
+    test trofs-12.8 {OpenFileChannel: link to writable file} -constraints {
+	TclBug833713Fixed
+    } -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file
+	set link [makeFile {} link $dir]
+	removeFile link $dir
+	set mp [makeFile {} mp]
+	removeFile mp
+	file link $link ../file
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive $mp]
+    } -body {
+	set f [open [file join $m link] a]
+	puts $f more
+	close $f
+	set f [open [file join $m link]]
+	read $f
+    } -cleanup {
+	catch {close $f}
+	unmount $m
+	removeFile archive
+	file delete $link
+	removeFile file
+	removeDirectory dir
+    }  -result contents\nmore\n
+
+    test trofs-12.9 {OpenFileChannel: broken link} -constraints {
+	TclBug833713Fixed
+    } -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set link [makeFile {} link $dir]
+	removeFile link $dir
+	file link $link file
+	removeFile file $dir
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	open [file join $m link]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	file delete $link
+	removeDirectory dir
+    } -returnCodes error -match glob -result\
+    {cannot open "trofs://*/link": no such file or directory}
+
+
+    test trofs-13.0 {MatchInDirectory: archive touch} -constraints {
+	TclBug943995Fixed
+    } -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	after 1000
+	set path [file join $m file]
+	file mtime $archive [clock seconds]
+    } -body {
+	glob -nocomplain $path		;# "Corruption" not detected
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -match regexp -result {trofs://[0-9]+/file}
+
+    test trofs-13.1 {MatchInDirectory: archive touch} -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	after 1000
+	file mtime $archive [clock seconds]
+    } -body {
+	glob -directory $m *		;# "Corruption" not detected
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -match regexp -result {trofs://[0-9]+/file}
+
+    test trofs-13.2 {MatchInDirectory: archive touch} -constraints {
+	TclBug943995Fixed
+    } -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	after 1000
+	file mtime $archive [clock seconds]
+    } -body {
+	glob -nocomplain [file join $m *]	;# "Corruption" not detected
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -match regexp -result {trofs://[0-9]+/file}
+
+    test trofs-13.3 {MatchInDirectory: archive touch} -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	after 1000
+	set path [file join $m file]
+	file mtime $archive [clock seconds]
+    } -body {
+	set result [file isdirectory $m]  ;# Touch detected
+	glob $path		;# "Corruption" detected this time
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -returnCodes error -match regexp -result\
+    {no files matched glob pattern "trofs://[0-9]+/file"}
+
+    test trofs-13.4 {MatchInDirectory: archive touch} -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	after 1000
+	file mtime $archive [clock seconds]
+    } -body {
+	set result [file isdirectory $m]  ;# Touch detected
+	glob -directory $m *	;# "Corruption" detected this time
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -returnCodes error -result {stale file handle}
+
+    test trofs-13.5 {MatchInDirectory: archive touch} -constraints {
+	TclBug943995Fixed
+    } -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	after 1000
+	file mtime $archive [clock seconds]
+    } -body {
+	set result [file isdirectory $m]  ;# Touch detected
+	glob [file join $m *]	;# "Corruption" detected this time
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -returnCodes error -result {stale file handle}
+
+    test trofs-13.6 {MatchInDirectory: no wildcards} -constraints {
+	TclBug943995Fixed
+    } -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	glob -nocomplain [file join $m file]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -match regexp -result {trofs://[0-9]+/file}
+
+    test trofs-13.7 {MatchInDirectory: wildcards} -constraints {
+	TclBug943995Fixed
+    } -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	makeFile contents file2 $dir
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	lsort -dictionary [glob -nocomplain [file join $m file*]]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeFile file2 $dir
+	removeFile file $dir
+	removeDirectory dir
+    } -match regexp -result {trofs://[0-9]+/file trofs://[0-9]+/file2}
+
+    test trofs-13.8 {MatchInDirectory: wildcards on empty dir} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	glob -nocomplain [file join $m file*]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeDirectory dir
+    } -result {}
+
+    test trofs-13.9 {MatchInDirectory: type filtering} -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	glob -nocomplain -types w [file join $m file*]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -result {}
+
+    test trofs-13.10 {MatchInDirectory: type filtering} -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	glob -nocomplain -types x [file join $m file*]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -result {}
+
+    test trofs-13.11 {MatchInDirectory: type filtering} -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file $dir
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	glob -nocomplain -types hidden [file join $m file*]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -result {}
+
+    test trofs-13.12 {MatchInDirectory: type filtering} -constraints {
+	TclBug833713Fixed
+    } -setup {
+	set dir [makeDirectory dir]
+	makeDirectory sub $dir
+	makeFile contents file $dir
+	file link [file join $dir link.file] file
+	file link [file join $dir link.dir] sub
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	lsort -dictionary [glob -nocomplain -tails -directory $m -types l *]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	file delete [file join $dir link.file]
+	file delete [file join $dir link.dir]
+	removeFile file $dir
+	removeDirectory sub $dir
+	removeDirectory dir
+    } -result {link.dir link.file}
+
+    test trofs-13.13 {MatchInDirectory: type filtering} -constraints {
+	TclBug833713Fixed
+    } -setup {
+	set dir [makeDirectory dir]
+	makeDirectory sub $dir
+	makeFile contents file $dir
+	file link [file join $dir link.file] file
+	file link [file join $dir link.dir] sub
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	lsort -dictionary [glob -nocomplain -tails -directory $m -types d *]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	file delete [file join $dir link.file]
+	file delete [file join $dir link.dir]
+	removeFile file $dir
+	removeDirectory sub $dir
+	removeDirectory dir
+    } -result {link.dir sub}
+
+    test trofs-13.14 {MatchInDirectory: type filtering} -constraints {
+	TclBug833713Fixed
+    } -setup {
+	set dir [makeDirectory dir]
+	makeDirectory sub $dir
+	makeFile contents file $dir
+	file link [file join $dir link.file] file
+	file link [file join $dir link.dir] sub
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	lsort -dictionary [glob -nocomplain -tails -directory $m -types f *]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	file delete [file join $dir link.file]
+	file delete [file join $dir link.dir]
+	removeFile file $dir
+	removeDirectory sub $dir
+	removeDirectory dir
+    } -result {file link.file}
+
+    test trofs-13.16 {MatchInDirectory: type filtering} -constraints {
+	unix
+    } -setup {
+	set dir [makeDirectory dir]
+	set link [makeFile {} link $dir]
+	removeFile link $dir
+	exec ln -s link $link
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	lsort -dictionary [glob -nocomplain -tails -directory $m -types l *]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	file delete $link
+	removeDirectory dir
+    } -result {link}
+
+    test trofs-13.17 {MatchInDirectory: type filtering} -constraints {
+	unix
+    } -setup {
+	set dir [makeDirectory dir]
+	set link [makeFile {} link $dir]
+	removeFile link $dir
+	exec ln -s link $link
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	lsort -dictionary [glob -nocomplain -tails -directory $m -types f *]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	file delete $link
+	removeDirectory dir
+    } -result {}
+
+
+    test trofs-14.0 {Link:  can't create link: read-only fs} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file link [file join $m link] .
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeDirectory dir
+    } -returnCodes error -match glob -result\
+    {could not create new link "*" pointing to ".": read-only file system}
+
+    test trofs-14.1 {Link:  read non-existent link (mount child)} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file link [file join $m link]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeDirectory dir
+    } -returnCodes error -match glob -result\
+    {could not read link "*": no such file or directory}
+
+    test trofs-14.2 {Link:  read non-existent link (mount)} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file link $m
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeDirectory dir
+    } -returnCodes error -match glob -result\
+    {could not read link "*": invalid argument}
+
+    test trofs-14.3 {Link:  read non-link)} -setup {
+	set dir [makeDirectory dir]
+	set file [makeFile contents file $dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file link [file join $m file]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -returnCodes error -match glob -result\
+    {could not read link "*": invalid argument}
+
+    test trofs-14.4 {Link:  link to dir)} -constraints {
+	TclBug833713Fixed
+    } -setup {
+	set dir [makeDirectory dir]
+	file link [file join $dir link] .
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file link [file join $m link]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeDirectory dir
+    } -result .
+
+    test trofs-14.5 {Link:  link to file)} -constraints {
+	TclBug833713Fixed
+    } -setup {
+	set dir [makeDirectory dir]
+	set file [makeFile contents file $dir]
+	file link [file join $dir link] file
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file link [file join $m link]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -result file
+
+    test trofs-14.6 {Link:  link outside the archive)} -constraints {
+	TclBug833713Fixed
+    } -setup {
+	set dir [makeDirectory dir]
+	makeFile contents file
+	file link [file join $dir link] ../file
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file link [file join $m link]
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeFile file 
+	removeDirectory dir
+    } -result ../file
+
+
+    test trofs-15.0 {ListVolumes: trofs volume present} -body {
+	file volumes
+    } -match glob -result {*trofs://*}
+
+
+    test trofs-16.0 {FileAttr*: } -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file attributes $m
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeDirectory dir
+    } -result {}
+
+
+    test trofs-17.0 {FilessystemSeparator} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file separator $m
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeDirectory dir
+    } -result /
+
+
+    test trofs-18.0 {Utime: read-only filesystem } -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	file mtime $m 0
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeDirectory dir
+    } -returnCodes error -match glob -result\
+    {could not set modification time for file "*": read-only file system}
+
+    test trofs-18.1 {Utime: read-only filesystem } -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	# Note: tests nothing in Utime
+	file atime [file join $m f] 0
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeDirectory dir
+    } -returnCodes error -match glob -result\
+    {could not read "*": no such file or directory}
+
+
+    test trofs-19.0 {DriverInput: normal read operations} -setup {
+	set dir [makeDirectory dir]
+	set file [makeFile contents file $dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	set path [file join $m file]
+	set f [open $path]
+    } -body {
+	set result [read $f]
+	seek $f 0
+	append result [read $f 3]
+    } -cleanup {
+	close $f
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -result "contents\ncon"
+
+    test trofs-19.1 {DriverInput: read past end} -setup {
+	set dir [makeDirectory dir]
+	set file [makeFile contents file $dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	set path [file join $m file]
+	set f [open $path]
+    } -body {
+	list [set x [read $f 20]] [string length $x]
+    } -cleanup {
+	close $f
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -result [list "contents\n" 9]
+
+    test trofs-19.2 {DriverInput: archive touch} -setup {
+	set dir [makeDirectory dir]
+	set file [makeFile contents file $dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	after 1000
+	set path [file join $m file]
+	set f [open $path]
+	file mtime $archive [clock seconds]
+    } -body {
+	read $f	;# "Corruption" not detected
+		;# file already opened
+    } -cleanup {
+	close $f
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -result "contents\n"
+
+    test trofs-19.3 {DriverInput: archive loss} -constraints {
+	canDeleteBusyFile
+    } -setup {
+	set dir [makeDirectory dir]
+	set file [makeFile contents file $dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	set path [file join $m file]
+	set f [open $path]
+	removeFile archive
+    } -body {
+	read $f		;# Archive not really lost...
+			;# file already opened
+    } -cleanup {
+	close $f
+	unmount $m
+	removeFile file $dir
+	removeDirectory dir
+    } -result "contents\n"
+
+    test trofs-19.4 {DriverInput: archive overwrite} -setup {
+	set dir [makeDirectory dir]
+	set file [makeFile contents file $dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	set path [file join $m file]
+	set f [open $path]
+	after 1000
+	close [open $archive w]
+    } -body {
+	read $f		;# Archive change not detected, but
+			;# results different
+    } -cleanup {
+	close $f
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -result {}
+
+    test trofs-19.5 {DriverInput: archive touch} -setup {
+	set dir [makeDirectory dir]
+	set file [makeFile contents file $dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	after 1000
+	set path [file join $m file]
+	set f [open $path]
+	file mtime $archive [clock seconds]
+    } -body {
+	set result [file isdirectory $m]  ;# Touch detected
+	read $f		;# "Corruption" detected this time
+    } -cleanup {
+	close $f
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -returnCodes error -match glob -result\
+    {error reading "*": stale*file handle}
+
+    test trofs-19.6 {DriverInput: archive loss} -constraints {
+	canDeleteBusyFile 
+    } -setup {
+	set dir [makeDirectory dir]
+	set file [makeFile contents file $dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	set path [file join $m file]
+	set f [open $path]
+	removeFile archive
+    } -body {
+	set result [file isdirectory $m]  ;# Loss detected
+	read $f		;# "Corruption" detected this time
+    } -cleanup {
+	close $f
+	unmount $m
+	removeFile file $dir
+	removeDirectory dir
+    } -returnCodes error -match glob -result\
+    {error reading "*": stale*file handle}
+
+    test trofs-19.7 {DriverInput: archive overwrite} -setup {
+	set dir [makeDirectory dir]
+	set file [makeFile contents file $dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	set path [file join $m file]
+	set f [open $path]
+	after 1000
+	close [open $archive w]
+    } -body {
+	set result [file isdirectory $m]  ;# Overwrite detected
+	read $f		;# "Corruption" detected this time
+    } -cleanup {
+	close $f
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -returnCodes error -match glob -result\
+    {error reading "*": stale*file handle}
+
+
+    test trofs-20.0 {DriverWideSeek: normal seek operations} -setup {
+	set dir [makeDirectory dir]
+	set file [makeFile contents file $dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	set path [file join $m file]
+	set f [open $path]
+    } -body {
+	seek $f -1 end
+	set result [read $f 1]
+	seek $f -3 end
+	seek $f 1 current
+	append result [read $f 1]
+	seek $f -4 current
+	append result [read $f 1]
+	seek $f 1
+	append result [read $f 1]
+	seek $f 4 current
+	append result [read $f]
+    } -cleanup {
+	close $f
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -result "\nseots\n"
+
+    test trofs-20.1 {DriverWideSeek: seek past end} -setup {
+	set dir [makeDirectory dir]
+	set file [makeFile contents file $dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	set path [file join $m file]
+	set f [open $path]
+    } -body {
+	seek $f 1 end
+    } -cleanup {
+	close $f
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -returnCodes error -match glob -result \
+    {error during seek on "*": invalid argument}
+
+    test trofs-20.2 {DriverWideSeek: seek before start} -setup {
+	set dir [makeDirectory dir]
+	set file [makeFile contents file $dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	set path [file join $m file]
+	set f [open $path]
+    } -body {
+	seek $f -1
+    } -cleanup {
+	close $f
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -returnCodes error -match glob -result \
+    {error during seek on "*": invalid argument}
+
+    test trofs-20.3 {DriverWideSeek: archive touch} -setup {
+	set dir [makeDirectory dir]
+	set file [makeFile contents file $dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	after 1000
+	set path [file join $m file]
+	set f [open $path]
+	file mtime $archive [clock seconds]
+    } -body {
+	seek $f -3 end	;# "Corruption" not detected
+			;# file already opened
+	read $f
+    } -cleanup {
+	close $f
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -result "ts\n"
+
+    test trofs-20.4 {DriverWideSeek: archive loss} -constraints {
+	canDeleteBusyFile
+    } -setup {
+	set dir [makeDirectory dir]
+	set file [makeFile contents file $dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	set path [file join $m file]
+	set f [open $path]
+	removeFile archive
+    } -body {
+	seek $f -3 end	;# Archive not really lost...
+			;# file already opened
+	list [tell $f] [read $f] [tell $f]
+    } -cleanup {
+	close $f
+	unmount $m
+	removeFile file $dir
+	removeDirectory dir
+    } -result [list 6 "ts\n" 9]
+
+    test trofs-20.5 {DriverWideSeek: archive overwrite} -setup {
+	set dir [makeDirectory dir]
+	set file [makeFile contents file $dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	set path [file join $m file]
+	set f [open $path]
+	after 1000
+	close [open $archive w]
+    } -body {
+	seek $f -3 end	;# Archive change not detected, but
+			;# results different
+	list [tell $f] [read $f] [tell $f]
+    } -cleanup {
+	close $f
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -result {6 {} 6}
+
+    test trofs-20.6 {DriverWideSeek: archive touch} -setup {
+	set dir [makeDirectory dir]
+	set file [makeFile contents file $dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	after 1000
+	set path [file join $m file]
+	set f [open $path]
+	file mtime $archive [clock seconds]
+    } -body {
+	set result [file isdirectory $m]  ;# Touch detected
+	seek $f -3 end	;# "Corruption" detected this time
+    } -cleanup {
+	close $f
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -returnCodes error -match glob -result\
+    {error during seek on "*": stale*file handle}
+
+    test trofs-20.7 {DriverWideSeek: archive loss} -constraints {
+	canDeleteBusyFile
+    } -setup {
+	set dir [makeDirectory dir]
+	set file [makeFile contents file $dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	set path [file join $m file]
+	set f [open $path]
+	removeFile archive
+    } -body {
+	set result [file isdirectory $m]  ;# Loss detected
+	seek $f -3 end	;# "Corruption" detected this time
+    } -cleanup {
+	close $f
+	unmount $m
+	removeFile file $dir
+	removeDirectory dir
+    } -returnCodes error -match glob -result\
+    {error during seek on "*": stale*file handle}
+
+    test trofs-20.8 {DriverWideSeek: archive overwrite} -setup {
+	set dir [makeDirectory dir]
+	set file [makeFile contents file $dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+	set path [file join $m file]
+	set f [open $path]
+	after 1000
+	close [open $archive w]
+    } -body {
+	set result [file isdirectory $m]  ;# Overwrite detected
+	seek $f -3 end	;# "Corruption" detected this time
+    } -cleanup {
+	close $f
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -returnCodes error -match glob -result\
+    {error during seek on "*": stale*file handle}
+
+
+    test trofs-21.0 {Driver*: no new options} -setup {
+	set dir [makeDirectory dir]
+	set file [makeFile {} file $dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set m [mount $archive]
+    } -body {
+	set path [file join $m file]
+	set f [open $path]
+	set opts1 [fconfigure $f]
+	close $f
+	set f [open $archive]
+	set opts2 [fconfigure $f]
+	close $f
+	string equal $opts1 $opts2
+    } -cleanup {
+	unmount $m
+	removeFile archive
+	removeFile file $dir
+	removeDirectory dir
+    } -result 1
+
+
+    test trofs-22.0 {Bug fix} -setup {
+	set dir [makeDirectory dir]
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	set mountpoint [makeFile {} mountpoint]
+	removeFile mountpoint
+	set m [mount $archive $mountpoint]
+	set n [mount $archive [file join $m submount]]
+	file system $m	;# Can Cache wrong answer
+    } -body {
+	file isdirectory $n
+    } -cleanup {
+	unmount $n
+	unmount $m
+	removeFile archive
+	removeDirectory dir
+    } -result 1
+    
+
+    test trofs-23.0 {nested mounts} -setup {
+	set dir [makeDirectory dir]
+	set sub [makeDirectory sub $dir]
+	makeFile contents file $sub
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	mount $archive foo
+	mount $archive [file join foo bar]
+    } -body {
+	set f [open [file join foo bar sub file]]
+	set one [read $f]
+	close $f
+	set f [open [file join foo sub file]]
+	set two [read $f]
+	close $f
+	set f [open [file join $sub file]]
+	set three [read $f]
+	close $f
+	list [string equal $two $three] [string equal $one $three]
+    } -cleanup {
+	unmount [file join foo bar]
+	unmount foo
+	removeFile archive
+	removeFile file $sub
+	removeDirectory sub $dir
+	removeDirectory dir
+    } -result {1 1}
+
+    test trofs-23.1 {nested mounts} -setup {
+	set dir [makeDirectory dir]
+	set sub [makeDirectory sub $dir]
+	makeFile contents file $sub
+	set archive [makeFile {} archive]
+	archive $dir $archive
+	mount $archive foo
+	mount $archive [file join foo bar]
+    } -body {
+	unmount [file join foo bar]
+	file exists [file join foo bar sub file]
+    } -cleanup {
+	unmount foo
+	removeFile archive
+	removeFile file $sub
+	removeDirectory sub $dir
+	removeDirectory dir
+    } -result 0
+
+
+    test trofs-24.0 {nested archive} -setup {
+	set dir [makeDirectory dir]
+	set sub [makeDirectory sub $dir]
+	makeFile contents file $sub
+	archive $dir one.ar
+	archive . two.ar
+	set m [mount two.ar]
+	file delete one.ar
+	set n [mount [file join $m one.ar]]
+    } -body {
+	file system [file join $n sub file]
+	set f [open [file join $n sub file]]
+	set one [read $f]
+	close $f
+	set f [open [file join $sub file]]
+	set two [read $f]
+	close $f
+	string equal $one $two
+    } -cleanup {
+	unmount $n
+	unmount $m
+	file delete two.ar
+	removeFile file $sub
+	removeDirectory sub $dir
+	removeDirectory dir
+    } -result 1
+
+    cleanupTests
+}
+namespace delete ::trofs::test
+
