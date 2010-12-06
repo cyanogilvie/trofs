@@ -92,7 +92,8 @@ TEA_ADD_LIBS([])
 TEA_ADD_CFLAGS([-DTROFS_RUNTIME_SCRDIR=\\\"\$(pkglibdir)\\\" -DTROFS_SOURCE_SCRDIR=\\\"\$(srcdir)/library\\\"])
 fi
 TEA_ADD_STUB_SOURCES([])
-TEA_ADD_TCL_SOURCES([library/trofs.tcl library/procs.tcl])
+#TEA_ADD_TCL_SOURCES([library/trofs.tcl library/procs.tcl])
+TEA_ADD_TCL_SOURCES([])
 
 #--------------------------------------------------------------------
 # __CHANGE__
