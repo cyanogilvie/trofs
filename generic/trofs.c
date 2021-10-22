@@ -209,6 +209,7 @@ static Tcl_ObjCmdProc			UnmountObjCmd;
  */
 
 static Tcl_FSPathInFilesystemProc	PathInFilesystem;
+static Tcl_FSCreateInternalRepProc	CreateInternalRep;
 static Tcl_FSDupInternalRepProc		DupInternalRep;
 static Tcl_FSFreeInternalRepProc	FreeInternalRep;
 static Tcl_FSInternalToNormalizedProc	InternalToNormalized;
@@ -279,7 +280,7 @@ static Tcl_Filesystem trofsFilesystem = {
     &DupInternalRep,
     &FreeInternalRep,
     &InternalToNormalized,
-    NULL,			/* &CreateInternalRep, */
+    &CreateInternalRep,		/* &CreateInternalRep, */
     &NormalizePath,
     NULL,			/* &FilesystemPathType, */
     &FilesystemSeparator,
@@ -517,6 +518,31 @@ StoreDirInCache(Tcl_Obj *pathPtr, TrofsPath *tpPtr) {
 	    DupInternalRep((ClientData)tpPtr)));
 }
 
+/*
+ *----------------------------------------------------------------------
+ *
+ * DirInCache --
+ *
+ * 	Check whether pathPtr is in the cache
+ *
+ * 	The caller should hold a read lock on trofsMountLock when
+ * 	calling this routine.
+ *
+ * Results:
+ *	Returns true if pathPtr is in the cache, false otherwise
+ *
+ *----------------------------------------------------------------------
+ */
+
+static int
+DirInCache(Tcl_Obj *pathPtr) {
+    Tcl_Obj *dirPathPtr = NULL;
+    Tcl_Obj *dictPtr = GetCurrentDirCache();
+
+    Tcl_DictObjGet(NULL, dictPtr, pathPtr, &dirPathPtr);
+    return (NULL != dirPathPtr);
+}
+
 /*
  *----------------------------------------------------------------------
  *
@@ -818,6 +844,39 @@ PathInFilesystem(Tcl_Obj *pathPtr, ClientData *clientDataPtr) {
 	goto done;
     }
     Tcl_IncrRefCount(normPathPtr);
+    if (0 && DirInCache(normPathPtr)) {
+	result = TCL_OK;
+	goto done;
+    }
+
+    if (checkMounts) {
+	/* Neither path nor parent is known to us (yet) 
+	 * Check if the path has a mount as a prefix. */
+	Mount *mountPtr;
+	int normPathLen;
+	const char *normPath = Tcl_GetStringFromObj(normPathPtr, &normPathLen);
+
+	for (mountPtr = trofsMountList; mountPtr != NULL;
+		mountPtr = mountPtr->next) {
+	    if (normPathLen < mountPtr->pathLen) continue;
+	    if (0 == memcmp(mountPtr->path, normPath,
+		    (size_t)mountPtr->pathLen)) {
+		break;
+	    }
+	}
+	if (NULL == mountPtr) {
+	    /* None of our mounts is a prefix.  Reject it. */
+	    goto done;
+	}
+	if (normPathLen == mountPtr->pathLen) {
+	    /* The pathPtr is one of our mount points.  Claim it. */
+	    newPtr = CacheRootDirOfMountPoint(mountPtr);
+	    *clientDataPtr = DupInternalRep((ClientData) newPtr);
+	    result = TCL_OK;
+	    goto done;
+	}
+    }
+
     if (FetchDirFromCache(normPathPtr, &tpPtr)) {
 	/* Internal rep for the path is already in our cache
 	 * of directory paths we own.  Claim it. */
@@ -848,34 +907,6 @@ PathInFilesystem(Tcl_Obj *pathPtr, ClientData *clientDataPtr) {
     Tcl_DecrRefCount(pathElements);
 
     /* TODO: Consider rejection caches as well? */
-
-    if (checkMounts) {
-	/* Neither path nor parent is known to us (yet) 
-	 * Check if the path has a mount as a prefix. */
-	Mount *mountPtr;
-	int normPathLen;
-	const char *normPath = Tcl_GetStringFromObj(normPathPtr, &normPathLen);
-
-	for (mountPtr = trofsMountList; mountPtr != NULL;
-		mountPtr = mountPtr->next) {
-	    if (normPathLen < mountPtr->pathLen) continue;
-	    if (0 == memcmp(mountPtr->path, normPath,
-		    (size_t)mountPtr->pathLen)) {
-		break;
-	    }
-	}
-	if (NULL == mountPtr) {
-	    /* None of our mounts is a prefix.  Reject it. */
-	    goto done;
-	}
-	if (normPathLen == mountPtr->pathLen) {
-	    /* The pathPtr is one of our mount points.  Claim it. */
-	    newPtr = CacheRootDirOfMountPoint(mountPtr);
-	    *clientDataPtr = DupInternalRep((ClientData) newPtr);
-	    result = TCL_OK;
-	    goto done;
-	}
-    }
 
     if (NULL == tpPtr) {
 	TrofsPath **tpPtrPtr = &tpPtr;
@@ -996,6 +1027,172 @@ done:
     }
     CREW_Release(&trofsMountLock);
     return result;
+}
+
+static ClientData
+CreateInternalRep(Tcl_Obj *pathPtr) {
+    int elemCount, checkMounts = 1;
+    Tcl_Obj *normPathPtr, *pathElements, *parentPathPtr = NULL;
+    Tcl_Obj *tail = NULL;
+    Tcl_Obj *value = NULL;
+    TrofsPath *newPtr = NULL, *tpPtr = NULL;
+
+    /* No mount changes while we track down this path */
+    CREW_ReadHold(&trofsMountLock);
+
+    normPathPtr = Tcl_FSGetNormalizedPath(NULL, pathPtr);
+    if (NULL == normPathPtr) {
+	/* Should not happen I think */
+	goto done;
+    }
+    Tcl_IncrRefCount(normPathPtr);
+
+    if (checkMounts) {
+	Mount *mountPtr;
+	int normPathLen;
+	const char *normPath = Tcl_GetStringFromObj(normPathPtr, &normPathLen);
+
+	for (mountPtr = trofsMountList; mountPtr != NULL;
+		mountPtr = mountPtr->next) {
+	    if (normPathLen < mountPtr->pathLen) continue;
+	    if (0 == memcmp(mountPtr->path, normPath, (size_t)mountPtr->pathLen)) {
+		if (normPathLen == mountPtr->pathLen) {
+		    /* The pathPtr is one of our mount points.  Claim it. */
+		    newPtr = (TrofsPath *)Tcl_Alloc((int)sizeof(TrofsPath));
+		    newPtr->refCount = 1;
+		    newPtr->mountPtr = mountPtr;
+		    MountPreserve(newPtr->mountPtr);
+		    newPtr->parent = NULL;
+		    newPtr->tail = NULL;
+		    newPtr->size = mountPtr->indexSize;
+		    newPtr->offset = mountPtr->indexOffset;
+		    GetDirIndexFromArchive(newPtr);
+		    /* Tcl_IncrRefCount(newPtr->value);*/
+		    /* TODO: decide whether non-dirs should also be cached */
+		    if (S_IFDIR == newPtr->mode) {
+			StoreDirInCache(normPathPtr, newPtr);
+		    }
+		    goto done;
+		}
+	    }
+	}
+	goto done;
+    }
+
+    /* Path is not a directory in our cache.  Create its parent path. */
+    pathElements = Tcl_FSSplitPath(normPathPtr, &elemCount);
+    Tcl_IncrRefCount(pathElements);
+    if (elemCount > 1) {
+	Tcl_Obj *temp;
+	parentPathPtr = Tcl_FSJoinPath(pathElements, elemCount - 1);
+	Tcl_IncrRefCount(parentPathPtr);
+	Tcl_ListObjIndex(NULL, pathElements, elemCount - 1, &tail);
+	Tcl_IncrRefCount(tail);
+
+	if ((temp = FetchDirFromCache(parentPathPtr, &tpPtr))) {
+	    /* We have cached data on the parent dir, so no need
+	     * to scan the mount points */
+	    Tcl_IncrRefCount(temp);
+	    Tcl_DecrRefCount(parentPathPtr);
+	    parentPathPtr = temp;
+	}
+    }
+
+    Tcl_DecrRefCount(pathElements);
+
+    /* Parent path is directory in this filesystem.  Thus original path
+     * is in this filesystem too.  Claim it. */
+    newPtr = (TrofsPath *)Tcl_Alloc((int)sizeof(TrofsPath));
+    newPtr->refCount = 1;
+
+    /* path has same Mount as parent; ref count it. */
+    newPtr->mountPtr = tpPtr->mountPtr;
+    MountPreserve(newPtr->mountPtr);
+
+    newPtr->parent = parentPathPtr;
+    Tcl_IncrRefCount(newPtr->parent);
+
+    newPtr->tail = tail;
+    Tcl_IncrRefCount(newPtr->tail);
+
+    Tcl_DictObjGet(NULL, tpPtr->value, newPtr->tail, &value);
+    if (NULL == value) {
+	/* Path to non-existent file */
+	newPtr->mode = 0;
+	newPtr->size = 0;
+	newPtr->offset = 0;
+	newPtr->value = NULL;
+    } else {
+	char typeFlag;
+	Tcl_Obj *type;
+
+	Tcl_IncrRefCount(value);
+	Tcl_ListObjIndex(NULL, value, 0, &type);
+	Tcl_IncrRefCount(type);
+	typeFlag = Tcl_GetString(type)[0];
+	Tcl_DecrRefCount(type);
+	switch (typeFlag) {
+	    case 'L':
+		newPtr->mode = S_IFLNK;
+		newPtr->size = 0;
+		newPtr->offset = 0;
+		Tcl_ListObjIndex(NULL, value, 1, &newPtr->value);
+		Tcl_IncrRefCount(newPtr->value);
+		break;
+	    case 'F':
+		newPtr->mode = S_IFREG;
+
+		/* Cheating! Use value field as temp space */
+		Tcl_ListObjIndex(NULL, value, 1, &newPtr->value);
+		Tcl_IncrRefCount(newPtr->value);
+		Tcl_GetWideIntFromObj(NULL, newPtr->value, &newPtr->size);
+		Tcl_DecrRefCount(newPtr->value);
+
+		Tcl_ListObjIndex(NULL, value, 2, &newPtr->value);
+		Tcl_IncrRefCount(newPtr->value);
+		Tcl_GetWideIntFromObj(NULL, newPtr->value, &newPtr->offset);
+		Tcl_DecrRefCount(newPtr->value);
+		newPtr->offset = tpPtr->offset - newPtr->offset;
+
+		newPtr->value = NULL;
+		break;
+	    case 'D':
+
+		/* Cheating! Use value field as temp space */
+		Tcl_ListObjIndex(NULL, value, 1, &newPtr->value);
+		Tcl_IncrRefCount(newPtr->value);
+		Tcl_GetWideIntFromObj(NULL, newPtr->value, &newPtr->size);
+		Tcl_DecrRefCount(newPtr->value);
+
+		Tcl_ListObjIndex(NULL, value, 2, &newPtr->value);
+		Tcl_IncrRefCount(newPtr->value);
+		Tcl_GetWideIntFromObj(NULL, newPtr->value, &newPtr->offset);
+		Tcl_DecrRefCount(newPtr->value);
+		newPtr->offset = tpPtr->offset - newPtr->offset;
+
+		GetDirIndexFromArchive(newPtr);
+		if (NULL == newPtr->value) {
+		    FreeInternalRep((ClientData) newPtr);
+		    newPtr = NULL;
+		    goto done;
+		}
+		StoreDirInCache(normPathPtr, newPtr);
+	}
+	Tcl_DecrRefCount(value);
+    }
+
+done:
+    if (NULL != normPathPtr) {
+	Tcl_DecrRefCount(normPathPtr);
+    }
+    if (NULL != parentPathPtr) {
+	Tcl_DecrRefCount(parentPathPtr);
+    }
+    if (NULL != tail) {
+	Tcl_DecrRefCount(tail);
+    }
+    CREW_Release(&trofsMountLock);
+    return newPtr;
 }
 
 /*
@@ -1920,11 +2117,27 @@ FileAttrsSet(	Tcl_Interp *interp, int index,
     return TCL_ERROR;
 }
 
+static void free_sep(ClientData cdata)
+{
+	Tcl_Obj*	sep = (Tcl_Obj*)cdata;
+	Tcl_DecrRefCount(sep);
+}
+
+static Tcl_ThreadDataKey	key;
 static Tcl_Obj *
 FilesystemSeparator(Tcl_Obj *pathPtr) {
     /* This must be defined only for the sake of Tcl_FSPathSeparator,
      * and, by implication, [file separator] . */
-    return Tcl_NewStringObj("/", 1);
+
+	Tcl_Obj** sep;
+	sep = Tcl_GetThreadData(&key, sizeof(Tcl_Obj*));
+	if (*sep == NULL) {
+		*sep = Tcl_NewStringObj("/", 1);
+		Tcl_IncrRefCount(*sep);
+		Tcl_CreateThreadExitHandler(free_sep, *sep);
+	}
+
+	return *sep;
 }
 
 static int
